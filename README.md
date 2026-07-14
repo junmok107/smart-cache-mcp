@@ -178,3 +178,5 @@ smart-cache-mcp/
 개발 컨벤션, 핵심 설정값(유사도 임계값, TTL 매핑, 교체 공식), 개발 중 발견한 이슈와 해결 과정(Windows 포트 충돌, MCP SDK DNS 리바인딩 보호, `@airmcp-dev/core` 세션 제한 등)은 [`CLAUDE.md`](CLAUDE.md)에 상세히 기록되어 있습니다.
 
 실제 Claude 클라이언트에 붙여서 라이브로 히트/미스/오탐 여부를 검증한 기록은 [`docs/live-mcp-verification.md`](docs/live-mcp-verification.md)에 있습니다.
+
+전체 프로젝트의 최종 상태(타임라인, 보안 현황, 자체 평가 92/100 포함)는 [`docs/final-status.md`](docs/final-status.md)에 정리되어 있습니다.
