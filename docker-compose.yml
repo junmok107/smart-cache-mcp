@@ -53,6 +53,12 @@ services:
       dockerfile: Dockerfile
     container_name: smart-cache-mcp-server
     restart: unless-stopped
+    # host.docker.internal is provided automatically by Docker Desktop
+    # (Windows/Mac) but NOT by Linux Docker (e.g. GitHub Actions runners)
+    # unless explicitly mapped — this makes it resolve everywhere. Needed
+    # so mcp-server can reach host-run downstream MCP fixtures in tests.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       NODE_ENV: ${NODE_ENV}
       LOG_LEVEL: ${LOG_LEVEL}
