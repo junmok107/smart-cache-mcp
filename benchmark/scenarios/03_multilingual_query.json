@@ -1,0 +1,18 @@
+{
+  "id": "03_multilingual_query",
+  "name": "다국어 질의",
+  "description": "같은 의미를 한국어/영어로 번갈아 질의 — multilingual-e5-base의 다국어 성능 검증",
+  "importance": 5,
+  "calls": [
+    { "question": "인공지능이란 무엇인가요?" },
+    { "question": "What is artificial intelligence?" },
+    { "question": "머신러닝이란 무엇인가요?" },
+    { "question": "What is machine learning?" },
+    { "question": "인공지능에 대해 설명해줘" },
+    { "question": "Can you explain what AI is?" },
+    { "question": "머신러닝을 설명해주세요" },
+    { "question": "Please explain machine learning" },
+    { "question": "AI가 무엇인지 알려줘" },
+    { "question": "Tell me what artificial intelligence is" }
+  ]
+}

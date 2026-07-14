@@ -1,0 +1,19 @@
+{
+  "name": "smart-cache-mcp-benchmark",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Token-savings benchmark for Smart Cache MCP",
+  "scripts": {
+    "benchmark": "tsx run_benchmark.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  }
+}

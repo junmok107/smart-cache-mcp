@@ -1,0 +1,18 @@
+{
+  "id": "02_paraphrased_query",
+  "name": "유사 질의 변형",
+  "description": "같은 의미를 다른 표현으로 물어보는 질의 10개 — 퍼지 매칭(코사인 유사도 0.90 임계값) 검증",
+  "importance": 5,
+  "calls": [
+    { "question": "인공지능이란 무엇인가요?" },
+    { "question": "AI가 정확히 뭔가요?" },
+    { "question": "인공지능에 대해 설명해주세요" },
+    { "question": "인공지능의 정의가 궁금해요" },
+    { "question": "AI란 무엇을 의미하나요?" },
+    { "question": "인공지능을 쉽게 설명해줄 수 있나요?" },
+    { "question": "인공지능이 뭔지 알려줘" },
+    { "question": "AI 기술이 무엇인지 궁금합니다" },
+    { "question": "인공지능에 대해 알고 싶어요" },
+    { "question": "인공지능이란 개념을 설명해줘" }
+  ]
+}
