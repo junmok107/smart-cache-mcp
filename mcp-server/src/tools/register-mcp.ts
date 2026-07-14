@@ -2,6 +2,7 @@ import { defineTool } from "@airmcp-dev/core";
 import { z } from "zod";
 
 import { mcpRegistry } from "../db/index.js";
+import { authParams } from "./auth.js";
 import { assertPublicEndpoint } from "./ssrf-guard.js";
 
 const URL_PATTERN = /^https?:\/\//i;
@@ -12,6 +13,7 @@ export const registerMcpTool = defineTool("register_mcp", {
   params: {
     alias: z.string().min(1).describe('별칭 (예: "weather", "sq")'),
     endpoint: z.string().describe("MCP 서버 URL"),
+    ...authParams,
   },
   handler: async ({ alias, endpoint }) => {
     if (!URL_PATTERN.test(endpoint)) {

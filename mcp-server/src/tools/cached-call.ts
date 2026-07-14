@@ -2,6 +2,7 @@ import { defineTool } from "@airmcp-dev/core";
 import { z } from "zod";
 
 import { executeCachedCall } from "../cache/index.js";
+import { authParams } from "./auth.js";
 import { resolveEndpoint } from "./resolve-endpoint.js";
 
 export const cachedCallTool = defineTool("cached_call", {
@@ -17,6 +18,7 @@ export const cachedCallTool = defineTool("cached_call", {
       .min(1)
       .max(5)
       .describe("1(매우 낮음)~5(매우 높음) 데이터 중요도 — 캐시 TTL을 결정"),
+    ...authParams,
   },
   handler: async ({ endpoint, tool_name, arguments: argumentsJson, importance }) => {
     let parsedArguments: Record<string, unknown>;

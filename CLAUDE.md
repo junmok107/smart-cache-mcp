@@ -270,6 +270,7 @@ docker compose exec embedding-service pytest -v
 | `POSTGRES_PORT` | 호스트에 게시되는 PostgreSQL 포트 (기본 **15432**, 컨테이너 내부 포트는 5432 그대로). Windows + Docker Desktop(WSL2) 환경에서 5432/5433이 로컬에 이미 설치된 PostgreSQL 서비스와 충돌해 의도적으로 특이한 포트를 사용 — 아래 "Windows 포트 충돌" 참고 |
 | `DATABASE_URL` | mcp-server가 사용하는 전체 접속 문자열 |
 | `MCP_SERVER_PORT` | mcp-server 리슨 포트 (기본 3000) |
+| `MCP_AUTH_TOKEN` | 설정 시 5개 도구 전부에 bearer 토큰 인증 강제 (미설정 시 인증 없음, 기본값). 도구 파라미터 `_auth`로 전달 — 10장 "사후 개선" 참고 |
 | `EMBEDDING_SERVICE_URL` | mcp-server → embedding-service 호출 URL |
 | `EMBEDDING_SERVICE_PORT` | embedding-service 리슨 포트 (기본 8000) |
 | `EMBEDDING_MODEL_NAME` | 사용 임베딩 모델 (`intfloat/multilingual-e5-base`) |
@@ -302,6 +303,14 @@ docker compose exec embedding-service pytest -v
 - **`register_mcp` SSRF 방어 추가**: `src/tools/ssrf-guard.ts`에 사설/루프백/링크로컬 대역(127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 — 클라우드 메타데이터 엔드포인트 포함 — 및 IPv6 대응 대역) 판별 로직을 추가하고 `register_mcp` 핸들러에서 호출. **`NODE_ENV === "production"`일 때만 강제**하도록 게이팅함 — `host.docker.internal`/`localhost`로 로컬 다운스트림을 등록하는 개발·테스트 워크플로(`.env.example` 기본값은 `development`)를 깨뜨리지 않으면서, 실제 배포 시나리오에서만 방어가 걸리도록 함. 유닛 테스트(`test/unit/ssrf-guard.test.ts`)와 실제 도커 환경에서의 통합 테스트로 기존 흐름이 안 깨졌음을 확인
 - **GitHub Actions CI 추가**: `.github/workflows/ci.yml` — lint+build+unit 테스트는 인프라 없이 바로 실행, integration 잡은 실제로 `docker compose up`으로 3개 컨테이너를 띄우고 살아있는 mcp-server를 상대로 vitest 통합 테스트 + embedding-service pytest까지 돌림. GPU 없는 러너 대응으로 `docker-compose.ci.yml`(`deploy: !reset null`로 nvidia 디바이스 예약만 제거하는 오버레이)을 추가 — `embedding-service/app.py`가 CUDA 미가용 시 자동으로 CPU 폴백하도록 이미 짜여 있어서 이 오버레이 하나로 충분함. 로컬에서 오버레이 적용 후 전체 스택 기동 + `npm test`(29개) + pytest(4개) 모두 통과 확인
   - 이 검증 과정에서 **`requirements-dev.txt` 자체가 컨테이너에 복사되지 않아 pytest 설치가 실패하는 버그**를 발견함 — 8장 "테스트 실행" 절의 기존 안내와 CI 워크플로 둘 다 `docker compose cp embedding-service/requirements-dev.txt ...` 스텝이 빠져 있었음 (6단계에서 처음 pytest를 셋업할 때는 `pip install pytest==... httpx==...`를 직접 실행해서 이 경로를 안 탔던 것으로 추정). 두 곳 모두 수정함
+
+이어서 "실서비스 준비도/보안" 카테고리에서 지적받은 나머지 항목(인증, 레이트리밋) 중 실제로 구현 가능한 부분을 반영함:
+
+- **선택적 토큰 인증 (`MCP_AUTH_TOKEN`)**: `@airmcp-dev/core`의 내장 `authPlugin`을 채택. 이 플러그인은 **HTTP 헤더가 아니라 도구 파라미터** 기반 인증이라(`before` 미들웨어가 `ctx.params[paramName]`을 검사), `src/tools/auth.ts`에서 `MCP_AUTH_TOKEN` env가 설정된 경우에만 5개 도구 전부의 `params`에 `_auth: z.string()`을 스프레드해 넣고, `index.ts`에서 `use: [authPlugin({ type: "bearer", keys: [...] })]`을 조건부로 등록. **`MCP_AUTH_TOKEN` 미설정 시 완전히 비활성** — SSRF 가드와 동일하게 로컬 zero-config 개발 흐름을 깨지 않는 옵트인 방식
+- **전역 레이트리밋 + 위협탐지 + 감사로그 (`shield`)**: `authPlugin`과 별개로 `defineServer({ shield: {...} })` 내장 옵션을 항상 켜둠 — 프롬프트 인젝션/명령어 인젝션/경로 순회 패턴을 도구 파라미터에서 정규식으로 탐지하고, 도구별 전역 레이트리밋(기본 60회/분, `cached_call`은 120회/분으로 넉넉하게, 파괴적 동작인 `cache_clear`는 5회/분으로 타이트하게), 모든 allow/deny 판정을 감사 로그로 남김. `perUserRateLimitPlugin`(파라미터로 사용자를 식별하는 방식)이 아니라 `shield.rateLimit`(도구별 전역 카운터)을 선택한 이유는 우리 유스케이스가 "이 서버 전체를 남용으로부터 보호"이지 "사용자별 쿼터"가 아니기 때문
+- **실제 라이브 검증 (임시 스크립트, 확인 후 삭제)**: `.env`에 `MCP_AUTH_TOKEN`을 임시로 채우고 컨테이너를 재기동해, 실제 MCP 클라이언트로 (1) `_auth` 없이 호출 → 스키마 검증 단계에서 거부, (2) 틀린 토큰으로 호출 → `authPlugin`이 거부, (3) 맞는 토큰 → 정상 처리, (4) `cache_clear`를 6번 연속 호출 → 정확히 6번째에 레이트리밋 발동을 전부 실측 확인. 이후 `.env`를 원복하고 컨테이너를 인증 없는 기본 상태로 재기동, 전체 vitest 스위트(31개) 재통과 확인
+  - 이 과정에서 **`authPlugin`이 거부할 때 `abortResponse.isError: true`를 설정해도 클라이언트가 받는 `CallToolResult`에는 `isError`가 안 실리는 프레임워크 특이사항**을 발견함 (거부 메시지 텍스트 자체는 정상 전달됨) — 6단계 SSE 세션 제한과 같은 결의 발견. 클라이언트가 인증 실패를 판별하려면 `isError` 플래그가 아니라 응답 텍스트의 `[Auth]`/`[Shield]` 접두어를 봐야 함. 우리 쪽 코드에는 영향 없음(실제로 도구 실행 자체가 차단되는 보안 동작은 정상)이라 프레임워크 버전 업그레이드 전까지는 기록만 해둠
+- **미반영 항목과 이유**: TLS와 다중 인스턴스(HA) 이중화는 이번에 손대지 않음. TLS는 통상 컨테이너 자체가 아니라 앞단 리버스 프록시(nginx/Caddy/Traefik)가 종단하는 게 표준 패턴이라 앱 코드 변경이 아니라 배포 토폴로지 문제이고, 로컬 단일 사용자 데모 환경에서 실제로 구동·검증할 방법이 없어 코드 변경 없이 "실배포 시 리버스 프록시로 TLS 종단" 원칙만 기록해둠. 다중 인스턴스 대응은 SSE transport 자체가 인메모리 세션 맵이라(6단계 기록 참고) 애플리케이션 계층을 다시 설계해야 하는 큰 작업이라 이번 스코프에서 제외 — 포트폴리오 프로젝트의 단일 인스턴스 전제와 맞지 않는 과잉 엔지니어링으로 판단함
 
 ## 11. 참고 문서
 

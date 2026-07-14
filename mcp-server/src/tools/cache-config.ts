@@ -1,6 +1,8 @@
 import { defineTool } from "@airmcp-dev/core";
 import { z } from "zod";
 
+import { authParams } from "./auth.js";
+
 const ttlMapSchema = z.record(z.enum(["1", "2", "3", "4", "5"]), z.number().int().positive());
 
 const DEFAULT_TTL_SECONDS: Record<string, number> = {
@@ -38,6 +40,7 @@ export const cacheConfigTool = defineTool("cache_config", {
       .string()
       .optional()
       .describe('중요도별 TTL(초) JSON, 예: {"1":300,"2":1800,"3":7200,"4":86400,"5":172800}'),
+    ...authParams,
   },
   handler: async ({ max_entries, similarity_threshold, ttl_map }) => {
     if (max_entries !== undefined) {
