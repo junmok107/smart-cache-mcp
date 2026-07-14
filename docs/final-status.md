@@ -53,7 +53,7 @@ PostgreSQL + pgvector (HNSW, top-K 후보 검색)
 - **퍼지 매칭 (2단계 검색-후-재랭킹)**: 1단계 `multilingual-e5-base`(768차원) + pgvector HNSW 코사인 유사도로 top-5 후보 검색, 2단계 `BAAI/bge-reranker-v2-m3` cross-encoder가 재채점해 최종 히트/미스 결정 (임계값 0.60). 상세 근거·실측값은 CLAUDE.md 11장
 - **중요도 기반 TTL**: importance 1~5 → 5분~48시간
 - **우선순위 기반 교체**: `importance × log₂(hit_count+2) × recency_weight` (recency half-life 72시간), `CACHE_MAX_ENTRIES`(기본 50,000건) 초과 시 트리거
-- **장애 대응 3종**: Advisory Lock 스탬피드 방지, SHA-256 해시 폴백(임베딩 장애 시), stale-while-revalidate(원본 장애 시)
+- **장애 대응 4종**: Advisory Lock 스탬피드 방지, 코사인 유사도 판정으로 자동 강등(재랭킹 장애 시), SHA-256 해시 폴백(임베딩 장애 시), stale-while-revalidate(원본 장애 시)
 - **5개 도구**: `cached_call`, `register_mcp`, `cache_stats`, `cache_clear`, `cache_config`
 
 ## 보안

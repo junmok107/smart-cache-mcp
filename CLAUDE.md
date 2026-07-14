@@ -177,6 +177,7 @@ Response: { "embeddings": number[][], "model": string, "dimensions": 768 }
 
 ### 장애 대응
 - **캐시 스탬피드**: PostgreSQL Advisory Lock으로 동일 키 동시 요청 시 중복 원본 호출 방지, 대기 후 결과 공유
+- **재랭킹 서비스 장애**: 1단계 벡터 검색 결과는 유지한 채 `CACHE_SIMILARITY_THRESHOLD`(코사인) 기준 판정으로 강등 (11장 "재랭킹" 참고, 사후 개선으로 추가됨)
 - **임베딩 서비스 장애**: `arguments_hash`(SHA-256) 기반 정확 매칭으로 폴백 (퍼지 매칭 불가, 서비스는 유지)
 - **원본 MCP 장애 / stale-while-revalidate**: TTL 만료 캐시라도 즉시 반환(`stale: true`) 후 백그라운드에서 갱신, 원본 미응답 시 에러보다 stale 데이터 우선
 

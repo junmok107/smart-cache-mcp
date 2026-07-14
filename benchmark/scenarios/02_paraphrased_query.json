@@ -1,7 +1,7 @@
 {
   "id": "02_paraphrased_query",
   "name": "유사 질의 변형",
-  "description": "같은 의미를 다른 표현으로 물어보는 질의 10개 — 퍼지 매칭(코사인 유사도 0.90 임계값) 검증",
+  "description": "같은 의미를 다른 표현으로 물어보는 질의 10개 — 퍼지 매칭(1단계 코사인 top-K + 2단계 재랭킹) 검증",
   "importance": 5,
   "calls": [
     { "question": "인공지능이란 무엇인가요?" },
