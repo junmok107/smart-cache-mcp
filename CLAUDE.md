@@ -253,6 +253,7 @@ npm test                   # 전체
 # embedding-service: 컨테이너 안에 torch/모델이 있으므로 컨테이너 안에서 실행
 docker compose cp embedding-service/tests embedding-service:/app/tests
 docker compose cp embedding-service/pytest.ini embedding-service:/app/pytest.ini
+docker compose cp embedding-service/requirements-dev.txt embedding-service:/app/requirements-dev.txt
 docker compose exec embedding-service pip install -r requirements-dev.txt
 docker compose exec embedding-service pytest -v
 ```
@@ -293,6 +294,15 @@ docker compose exec embedding-service pytest -v
 
 **전체 7단계 개발 완료.** 각 단계 완료 시 `docker-compose up --build`로 정상 기동을 확인하며 진행했다.
 
-## 10. 참고 문서
+## 10. 사후 개선 (냉철 평가 피드백 반영, 2026-07-14)
+
+7단계 완료 후 프로젝트를 다방면으로 냉정하게 재평가한 결과 발견된 3가지 우선순위를 실제로 반영함:
+
+- **ESLint 실제 도입**: `CLAUDE.md`에 "ESLint 규칙 준수"라고 문서화만 해두고 실제 설정 파일이 없던 상태였다 (문서-코드 괴리). `mcp-server/eslint.config.js`(flat config, `typescript-eslint` recommended)를 추가하고 `npm run lint` 스크립트로 연결. 기존 코드는 위반 0건으로 통과했지만, 새로 추가한 `ssrf-guard.ts`에서 `preserve-caught-error` 룰이 실제로 catch한 에러의 cause 체인을 안 살리고 있던 것을 잡아냄 (수정함) — 룰이 실제로 유용했다는 증거
+- **`register_mcp` SSRF 방어 추가**: `src/tools/ssrf-guard.ts`에 사설/루프백/링크로컬 대역(127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 — 클라우드 메타데이터 엔드포인트 포함 — 및 IPv6 대응 대역) 판별 로직을 추가하고 `register_mcp` 핸들러에서 호출. **`NODE_ENV === "production"`일 때만 강제**하도록 게이팅함 — `host.docker.internal`/`localhost`로 로컬 다운스트림을 등록하는 개발·테스트 워크플로(`.env.example` 기본값은 `development`)를 깨뜨리지 않으면서, 실제 배포 시나리오에서만 방어가 걸리도록 함. 유닛 테스트(`test/unit/ssrf-guard.test.ts`)와 실제 도커 환경에서의 통합 테스트로 기존 흐름이 안 깨졌음을 확인
+- **GitHub Actions CI 추가**: `.github/workflows/ci.yml` — lint+build+unit 테스트는 인프라 없이 바로 실행, integration 잡은 실제로 `docker compose up`으로 3개 컨테이너를 띄우고 살아있는 mcp-server를 상대로 vitest 통합 테스트 + embedding-service pytest까지 돌림. GPU 없는 러너 대응으로 `docker-compose.ci.yml`(`deploy: !reset null`로 nvidia 디바이스 예약만 제거하는 오버레이)을 추가 — `embedding-service/app.py`가 CUDA 미가용 시 자동으로 CPU 폴백하도록 이미 짜여 있어서 이 오버레이 하나로 충분함. 로컬에서 오버레이 적용 후 전체 스택 기동 + `npm test`(29개) + pytest(4개) 모두 통과 확인
+  - 이 검증 과정에서 **`requirements-dev.txt` 자체가 컨테이너에 복사되지 않아 pytest 설치가 실패하는 버그**를 발견함 — 8장 "테스트 실행" 절의 기존 안내와 CI 워크플로 둘 다 `docker compose cp embedding-service/requirements-dev.txt ...` 스텝이 빠져 있었음 (6단계에서 처음 pytest를 셋업할 때는 `pip install pytest==... httpx==...`를 직접 실행해서 이 경로를 안 탔던 것으로 추정). 두 곳 모두 수정함
+
+## 11. 참고 문서
 
 - 기획서 원본: `smart-cache-mcp-proposal.docx` (기획서 v2.0, 2026-07-14)

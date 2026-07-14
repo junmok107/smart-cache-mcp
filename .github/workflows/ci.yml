@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test:unit
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env
+        run: cp .env.example .env
+
+      # GitHub-hosted runners have no GPU; docker-compose.ci.yml cancels out
+      # the nvidia device reservation from the base compose file (app.py
+      # already falls back to CPU on its own when CUDA isn't available).
+      - name: Start the stack (CPU-only)
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up --build -d
+
+      - name: Wait for all services to be healthy
+        run: |
+          for i in $(seq 1 60); do
+            unhealthy=$(docker compose ps --format json | jq -s '[.[] | select(.Health != "" and .Health != "healthy")] | length')
+            if [ "$unhealthy" = "0" ]; then
+              echo "all services healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "services did not become healthy in time"
+          docker compose ps
+          docker compose logs
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+
+      - name: Install mcp-server dependencies
+        working-directory: mcp-server
+        run: npm ci
+
+      - name: Run mcp-server integration tests
+        working-directory: mcp-server
+        env:
+          DATABASE_URL: postgresql://smartcache:changeme@localhost:15432/smart_cache_mcp
+          EMBEDDING_SERVICE_URL: http://localhost:8000
+          MCP_SERVER_TEST_URL: http://localhost:3000/sse
+        run: npm test
+
+      - name: Run embedding-service tests
+        run: |
+          docker compose cp embedding-service/tests embedding-service:/app/tests
+          docker compose cp embedding-service/pytest.ini embedding-service:/app/pytest.ini
+          docker compose cp embedding-service/requirements-dev.txt embedding-service:/app/requirements-dev.txt
+          docker compose exec -T embedding-service pip install -r requirements-dev.txt
+          docker compose exec -T embedding-service pytest -v
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

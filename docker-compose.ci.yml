@@ -1,0 +1,8 @@
+# CI override — GitHub Actions runners have no GPU, so this cancels out the
+# nvidia device reservation from the base docker-compose.yml (which would
+# otherwise fail container creation on a GPU-less host). app.py already
+# falls back to CPU automatically when CUDA isn't available, so no other
+# change is needed. Usage: docker compose -f docker-compose.yml -f docker-compose.ci.yml up
+services:
+  embedding-service:
+    deploy: !reset null

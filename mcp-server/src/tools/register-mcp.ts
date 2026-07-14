@@ -2,6 +2,7 @@ import { defineTool } from "@airmcp-dev/core";
 import { z } from "zod";
 
 import { mcpRegistry } from "../db/index.js";
+import { assertPublicEndpoint } from "./ssrf-guard.js";
 
 const URL_PATTERN = /^https?:\/\//i;
 
@@ -16,6 +17,7 @@ export const registerMcpTool = defineTool("register_mcp", {
     if (!URL_PATTERN.test(endpoint)) {
       throw new Error(`"endpoint" must be a valid http(s):// URL, got: ${endpoint}`);
     }
+    await assertPublicEndpoint(endpoint);
     const row = await mcpRegistry.upsertAlias(alias, endpoint);
     return { alias: row.alias, endpoint: row.endpoint, registered_at: row.created_at };
   },
