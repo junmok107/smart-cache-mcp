@@ -1,16 +1,28 @@
 import { cacheEntries, cacheLogs } from "../db/index.js";
-import type { CacheEntryRow, SimilarityMatch } from "../db/cache-entries.js";
-import { EmbeddingServiceError, embedPassage, embedQuery } from "../embedding/index.js";
+import type { CacheEntryRow } from "../db/cache-entries.js";
+import { EmbeddingServiceError, embedPassage, embedQuery, rerank } from "../embedding/index.js";
 import { DownstreamMcpError, callDownstreamTool } from "../proxy/index.js";
 import { maybeEvict } from "./eviction.js";
 import { buildCacheText, hashArguments } from "./hash.js";
 import { withStampedeLock } from "./stampede.js";
 import { computeExpiresAt } from "./ttl.js";
 
-// Read at call time (not module load) so a future cache_config tool can
-// change this at runtime without a process restart.
+// Read at call time (not module load) so cache_config can change these at
+// runtime without a process restart.
+//
+// getSimilarityThreshold() is no longer the primary hit/miss gate — since
+// the reranking feature, it's only the decision threshold for the degraded
+// path when the reranker itself is unreachable (see lookupFresh below).
 function getSimilarityThreshold(): number {
   return Number(process.env.CACHE_SIMILARITY_THRESHOLD ?? 0.9);
+}
+
+function getRerankThreshold(): number {
+  return Number(process.env.CACHE_RERANK_THRESHOLD ?? 0.6);
+}
+
+function getRerankTopK(): number {
+  return Number(process.env.CACHE_RERANK_TOP_K ?? 5);
 }
 
 export interface CachedCallParams {
@@ -49,13 +61,46 @@ async function lookupFresh(
 ): Promise<FreshMatch | null> {
   try {
     const vector = await embedQuery(argsText);
-    const match: SimilarityMatch | null = await cacheEntries.findBySimilarity(toolName, vector, {
+    const candidates = await cacheEntries.findTopKBySimilarity(toolName, vector, getRerankTopK(), {
       freshOnly: true,
     });
-    if (match && match.similarity >= getSimilarityThreshold()) {
-      return { entry: match, similarity: match.similarity };
+    if (candidates.length === 0) {
+      return null;
     }
-    return null;
+
+    try {
+      // Stage 2: cross-encoder reranking. Candidate text is rebuilt from the
+      // stored tool_name + arguments_raw (buildCacheText is key-order
+      // insensitive, so this matches what was embedded at insert time)
+      // rather than re-embedding — the reranker needs the raw text, not a
+      // vector.
+      const candidateTexts = candidates.map((candidate) =>
+        buildCacheText(candidate.tool_name, candidate.arguments_raw as Record<string, unknown>),
+      );
+      const scores = await rerank(argsText, candidateTexts);
+      let bestIndex = 0;
+      for (let i = 1; i < scores.length; i++) {
+        if (scores[i] > scores[bestIndex]) {
+          bestIndex = i;
+        }
+      }
+      if (scores[bestIndex] >= getRerankThreshold()) {
+        return { entry: candidates[bestIndex], similarity: scores[bestIndex] };
+      }
+      return null;
+    } catch (error) {
+      if (!(error instanceof EmbeddingServiceError)) {
+        throw error;
+      }
+      // Reranker unreachable but the vector search itself succeeded —
+      // degrade gracefully to the pre-reranking cosine-threshold decision
+      // instead of throwing the retrieval work away.
+      const top = candidates[0];
+      if (top.similarity >= getSimilarityThreshold()) {
+        return { entry: top, similarity: top.similarity };
+      }
+      return null;
+    }
   } catch (error) {
     if (!(error instanceof EmbeddingServiceError)) {
       throw error;

@@ -43,8 +43,33 @@ describe("cache: executeCachedCall", () => {
     expect(second.cacheHit).toBe(true);
     expect(second.stale).toBe(false);
     expect(second.result).toEqual(first.result);
-    expect(second.similarity ?? 0).toBeGreaterThanOrEqual(0.9);
+    // similarity now holds the stage-2 cross-encoder score (sigmoid, [0,1]),
+    // not raw cosine — an exact-duplicate call should score far above the
+    // default CACHE_RERANK_THRESHOLD (0.6).
+    expect(second.similarity ?? 0).toBeGreaterThanOrEqual(0.6);
     expect(second.tokensSaved).toBeGreaterThan(0);
+  });
+
+  it("rejects a structurally-similar but semantically different call after reranking", async () => {
+    // Regression check for the false-positive risk documented in CLAUDE.md:
+    // tool_name + JSON args that differ only in a numeric field (e.g.
+    // {"sides":6} vs {"sides":100}) can look deceptively close under cosine
+    // similarity alone. The cross-encoder reranker should still tell them
+    // apart and reject the mismatch as a miss.
+    await executeCachedCall({
+      endpoint: downstream.url,
+      toolName: "vitest_rerank_discrim",
+      arguments: { sides: 6 },
+      importance: 3,
+    });
+
+    const second = await executeCachedCall({
+      endpoint: downstream.url,
+      toolName: "vitest_rerank_discrim",
+      arguments: { sides: 100 },
+      importance: 3,
+    });
+    expect(second.cacheHit).toBe(false);
   });
 
   it("calls downstream exactly once for concurrent calls on a new key (stampede guard)", async () => {

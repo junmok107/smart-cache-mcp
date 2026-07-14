@@ -39,6 +39,21 @@ function ms(value: number | null): string {
   return value === null ? "-" : `${value.toFixed(1)}ms`;
 }
 
+// Weighted by call count so the summary prose always matches the table above
+// it, instead of a hand-typed number that silently goes stale when the
+// underlying latency characteristics change (as happened when reranking
+// added a second network round-trip to every hit).
+function weightedAvg(pairs: Array<[number | null, number]>): number | null {
+  let sumWeighted = 0;
+  let sumWeight = 0;
+  for (const [value, weight] of pairs) {
+    if (value === null || weight === 0) continue;
+    sumWeighted += value * weight;
+    sumWeight += weight;
+  }
+  return sumWeight === 0 ? null : sumWeighted / sumWeight;
+}
+
 export function generateReportMarkdown(report: BenchmarkReport): string {
   const lines: string[] = [];
 
@@ -83,22 +98,37 @@ export function generateReportMarkdown(report: BenchmarkReport): string {
   lines.push(`- 절감된 토큰: ${report.overall.tokensSaved}`);
   lines.push(`- **전체 토큰 절감률: ${report.overall.savingsPercent.toFixed(1)}%**`);
   lines.push("");
+  lines.push(
+    "> 재랭킹 도입(CLAUDE.md 11장) 이후 히트/미스가 cross-encoder 점수와 " +
+      "`CACHE_RERANK_THRESHOLD`(기본 0.60) 비교로 결정된다. 점수가 임계값에 " +
+      "바짝 붙는 경계 사례는 GPU 배치 추론의 부동소수점 비결정성으로 실행마다 " +
+      "히트/미스가 갈릴 수 있어, 이 리포트의 수치는 여러 번 재실행하면 소폭 달라질 수 있다.",
+  );
+  lines.push("");
+
+  const overallHitLatency = weightedAvg(
+    report.scenarios.map((s) => [s.avgHitLatencyMs, s.hitCount]),
+  );
+  const overallBaselineLatency = weightedAvg(
+    report.scenarios.map((s) => [s.avgBaselineLatencyMs, s.totalCalls]),
+  );
 
   lines.push("## 지연시간에 대한 솔직한 해석");
   lines.push("");
   lines.push(
-    "표를 보면 **캐시 hit(13~18ms)가 캐시 미사용 기준선(1.5~3ms)보다 오히려 느립니다.** " +
+    `표를 보면 **캐시 hit(${ms(overallHitLatency)})가 캐시 미사용 기준선(${ms(overallBaselineLatency)})보다 오히려 느립니다.** ` +
       "숨기지 않고 그대로 밝힙니다: 이 벤치마크의 다운스트림 지식조회 서버는 인메모리 키워드 " +
-      "매칭만 하는 목업이라 사실상 즉시 응답하는 반면, 캐시 hit는 매번 임베딩 서비스에 " +
-      "질의 임베딩을 요청하고(`query:` 프리픽스, GPU 추론 포함) pgvector로 유사도 검색을 " +
-      "하는 실제 네트워크 왕복이 필요합니다 — 이 오버헤드가 목업 서버의 응답 시간보다 큽니다.",
+      "매칭만 하는 목업이라 사실상 즉시 응답하는 반면, 캐시 hit는 매번 임베딩 서비스에 질의 " +
+      "임베딩을 요청하고(`query:` 프리픽스, GPU 추론) pgvector로 top-K 후보를 검색한 뒤, " +
+      "cross-encoder 재랭킹으로 후보를 다시 채점하는 실제 네트워크 왕복 2회가 필요합니다 — " +
+      "이 오버헤드가 목업 서버의 응답 시간보다 큽니다.",
   );
   lines.push("");
   lines.push(
     "즉 이 벤치마크가 실측으로 보여주는 이득은 **토큰 절감**이며, **지연시간 이득은 " +
       "원본 MCP 서버가 얼마나 무거운 작업을 하는지에 달려 있습니다.** 실제 검색 API, LLM 호출, " +
       "무거운 DB 쿼리처럼 원본 호출 자체가 수백 ms~수 초가 걸리는 경우에는 캐시 hit의 " +
-      "고정 오버헤드(~15ms)를 상쇄하고도 남아 지연시간도 함께 줄어들 것으로 예상되지만, " +
+      "고정 오버헤드를 상쇄하고도 남아 지연시간도 함께 줄어들 것으로 예상되지만, " +
       "이 벤치마크의 목업처럼 원본 호출이 극단적으로 가벼운 경우에는 캐시가 지연시간 측면에서 " +
       "오히려 손해일 수 있습니다.",
   );

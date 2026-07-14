@@ -35,11 +35,16 @@ function toVectorLiteral(embedding: number[]): string {
   return `[${embedding.join(",")}]`;
 }
 
-export async function findBySimilarity(
+// Stage 1 of retrieve-then-rerank (see CLAUDE.md "reranking" section): HNSW
+// cosine search returns the top-K closest candidates, unfiltered by
+// threshold — the actual accept/reject decision is made by the cross-encoder
+// reranker in cache/cached-call.ts, not here.
+export async function findTopKBySimilarity(
   toolName: string,
   embedding: number[],
+  k: number,
   options: { freshOnly?: boolean } = {},
-): Promise<SimilarityMatch | null> {
+): Promise<SimilarityMatch[]> {
   const { freshOnly = true } = options;
   const vector = toVectorLiteral(embedding);
   const freshClause = freshOnly ? "AND expires_at > now()" : "";
@@ -48,10 +53,10 @@ export async function findBySimilarity(
      FROM cache_entries
      WHERE tool_name = $2 AND embedding IS NOT NULL ${freshClause}
      ORDER BY embedding <=> $1::vector
-     LIMIT 1`,
-    [vector, toolName],
+     LIMIT $3`,
+    [vector, toolName, k],
   );
-  return rows[0] ?? null;
+  return rows;
 }
 
 export async function findByHash(

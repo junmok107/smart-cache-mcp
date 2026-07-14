@@ -1,1 +1,1 @@
-export { EmbeddingServiceError, embedPassage, embedQuery } from "./client.js";
+export { EmbeddingServiceError, embedPassage, embedQuery, rerank } from "./client.js";

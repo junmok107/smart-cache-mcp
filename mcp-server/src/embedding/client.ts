@@ -47,3 +47,34 @@ export async function embedPassage(text: string): Promise<number[]> {
   const [vector] = await embed([`passage: ${text}`]);
   return vector;
 }
+
+interface RerankResponse {
+  scores: number[];
+  model: string;
+}
+
+// Stage 2 of retrieve-then-rerank (proposal has no equivalent; see CLAUDE.md
+// "reranking" section for rationale). Plain text, no query:/passage: prefix
+// — that's an e5 bi-encoder convention, unrelated to the cross-encoder.
+export async function rerank(query: string, candidates: string[]): Promise<number[]> {
+  if (candidates.length === 0) {
+    return [];
+  }
+  let response: Response;
+  try {
+    response = await fetch(`${EMBEDDING_SERVICE_URL}/rerank`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, candidates }),
+    });
+  } catch (error) {
+    throw new EmbeddingServiceError("Failed to reach embedding service", { cause: error });
+  }
+
+  if (!response.ok) {
+    throw new EmbeddingServiceError(`Embedding service responded with ${response.status}`);
+  }
+
+  const data = (await response.json()) as RerankResponse;
+  return data.scores;
+}

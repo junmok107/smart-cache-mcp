@@ -55,3 +55,41 @@ def test_embed_semantic_similarity_beats_unrelated_text():
         sim_related = cosine(embeddings[0], embeddings[1])
         sim_unrelated = cosine(embeddings[0], embeddings[2])
         assert sim_related > sim_unrelated
+
+
+def test_rerank_returns_a_score_per_candidate():
+    with TestClient(app) as client:
+        response = client.post(
+            "/rerank",
+            json={"query": "get_weather {\"city\":\"Seoul\"}", "candidates": ["a", "b", "c"]},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["scores"]) == 3
+        assert all(0.0 <= s <= 1.0 for s in data["scores"])
+
+
+def test_rerank_empty_candidates_returns_empty_scores():
+    with TestClient(app) as client:
+        response = client.post("/rerank", json={"query": "anything", "candidates": []})
+        assert response.status_code == 200
+        assert response.json()["scores"] == []
+
+
+def test_rerank_prefers_the_relevant_candidate():
+    # Stage 2 of retrieve-then-rerank (CLAUDE.md "reranking") exists to be
+    # more discriminating than cosine similarity alone — a semantically
+    # matching candidate should clearly outscore an unrelated one.
+    with TestClient(app) as client:
+        response = client.post(
+            "/rerank",
+            json={
+                "query": "What is artificial intelligence?",
+                "candidates": [
+                    "인공지능이란 무엇인가요?",
+                    "파이썬으로 리스트를 정렬하는 방법",
+                ],
+            },
+        )
+        scores = response.json()["scores"]
+        assert scores[0] > scores[1]

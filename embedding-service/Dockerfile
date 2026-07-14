@@ -5,6 +5,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 ENV EMBEDDING_MODEL_NAME=intfloat/multilingual-e5-base
+ENV RERANK_MODEL_NAME=BAAI/bge-reranker-v2-m3
 ENV HF_HOME=/app/.cache/huggingface
 
 # Bake model weights into the image (CPU-only download; runtime device is
