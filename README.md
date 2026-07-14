@@ -1,0 +1,121 @@
+# Smart Cache MCP
+
+AI가 MCP 도구를 호출할 때마다 소비하는 토큰을 줄이기 위한 **캐싱 프록시 MCP 서버**입니다.
+
+다른 MCP 서버 앞단에 위치해, AI가 원본 도구를 직접 호출하는 대신 이 서버의 `cached_call` 도구 하나만 호출하면 됩니다. 캐시 조회 → (미스 시) 원본 호출 → 결과 저장이 내부에서 자동으로 처리되며, 정확히 같은 요청뿐 아니라 **의미적으로 유사한 요청도 임베딩 기반 퍼지 매칭으로 캐시 히트** 처리합니다.
+
+> 포트폴리오 프로젝트입니다. 실제 토큰 절감 효과를 [`benchmark/`](benchmark)로 직접 측정해 [`benchmark/REPORT.md`](benchmark/REPORT.md)에 결과를 남겼습니다.
+
+## 왜 필요한가
+
+현재 MCP 생태계에는 반복/유사 호출로 인한 토큰 낭비를 막는 캐싱 계층이 없습니다. 같은 질문, 혹은 표현만 다른 질문을 AI가 반복해서 도구로 호출할 때마다 원본 서버를 다시 부르고 그 결과를 다시 컨텍스트에 채워 넣는 비용이 그대로 발생합니다. Smart Cache MCP는 이 낭비를 프록시 계층에서 흡수합니다.
+
+```
+기존:      AI → 원본 MCP 서버 → 결과            (매번 토큰 소비)
+Smart Cache: AI → Smart Cache MCP → 캐시 히트 시 즉시 반환   (토큰 절감)
+                        └─ 캐시 미스 시에만 원본 MCP 호출
+```
+
+## 핵심 특징
+
+- **프록시 방식**: AI는 `cached_call` 하나만 호출하면 캐싱이 자동 처리됨
+- **퍼지 매칭**: `multilingual-e5-base` 임베딩 + pgvector HNSW 코사인 유사도(임계값 0.90)로 의미적으로 유사한 요청도 캐시 히트로 처리 — 다국어 질의도 지원
+- **중요도 기반 TTL**: AI가 응답의 중요도(1~5)를 판단해 캐시 수명을 5분~48시간까지 동적으로 설정
+- **우선순위 기반 교체**: `importance × log₂(hit_count+2) × recency_weight` 공식으로 캐시 포화 시 중요도 낮은 항목부터 자동 제거
+- **장애 대응 3종**: PostgreSQL Advisory Lock 기반 캐시 스탬피드 방지, 임베딩 서비스 장애 시 SHA-256 해시 정확 매칭 폴백, 원본 MCP 장애 시 stale-while-revalidate
+
+## 아키텍처
+
+```mermaid
+flowchart LR
+    AI["AI / MCP Client"] -- "cached_call" --> MCP["mcp-server\n(TypeScript, @airmcp-dev/core)"]
+    MCP -- "query: 임베딩 요청" --> EMB["embedding-service\n(FastAPI + multilingual-e5-base)"]
+    MCP -- "유사도 검색 / 저장" --> PG[("PostgreSQL + pgvector")]
+    MCP -- "캐시 미스 시에만" --> DS["하위 MCP 서버\n(원본 도구)"]
+```
+
+3개 컨테이너가 Docker Compose로 함께 뜹니다: `mcp-server`(프록시 겸 MCP 서버), `embedding-service`(임베딩 전용), `postgres`(pgvector 확장, 벡터+메타데이터 저장).
+
+## 5개 MCP 도구
+
+| 도구 | 설명 |
+|---|---|
+| `cached_call` | 하위 MCP 도구를 캐시를 통해 호출 (핵심 도구) |
+| `register_mcp` | 하위 MCP 서버를 별칭으로 등록 |
+| `cache_stats` | 히트율, 절감 토큰 추정치, 도구별/쿼리별 통계 조회 |
+| `cache_clear` | 캐시 초기화 (전체 / 특정 MCP / 특정 도구) |
+| `cache_config` | 유사도 임계값, 최대 항목 수, TTL 매핑을 런타임에 변경 (재시작 불필요) |
+
+## 빠른 시작
+
+```bash
+git clone https://github.com/junmok107/smart-cache-mcp.git
+cd smart-cache-mcp
+cp .env.example .env   # 필요 시 값 수정
+
+docker compose up --build -d
+docker compose ps       # 3개 컨테이너 모두 healthy 확인
+```
+
+`mcp-server`는 SSE transport로 `http://localhost:3000/sse`에 노출됩니다 (MCP 클라이언트 설정에 이 URL을 등록).
+
+## 기술 스택
+
+| 구분 | 기술 |
+|---|---|
+| MCP 서버 | TypeScript, `@airmcp-dev/core`, `@modelcontextprotocol/sdk` |
+| 임베딩 | Python, FastAPI, `intfloat/multilingual-e5-base` (768차원, CUDA) |
+| 저장소 | PostgreSQL 16 + pgvector (HNSW 인덱스) |
+| 인프라 | Docker Compose |
+| 테스트 | vitest (mcp-server), pytest (embedding-service) |
+
+## 테스트
+
+```bash
+# mcp-server (docker compose가 떠 있는 상태에서, 호스트에서 실행)
+cd mcp-server
+npm install
+npm test                 # unit + integration 23개
+
+# embedding-service (컨테이너 안에서 실행 — torch/모델이 컨테이너에만 있음)
+docker compose cp embedding-service/tests embedding-service:/app/tests
+docker compose cp embedding-service/pytest.ini embedding-service:/app/pytest.ini
+docker compose exec embedding-service pip install -r requirements-dev.txt
+docker compose exec embedding-service pytest -v
+```
+
+## 벤치마크 결과
+
+4개 시나리오(동일 질의 반복 / 유사 질의 변형 / 다국어 질의 / 혼합 워크로드), 총 46회 호출로 측정했습니다. "캐시 미사용" 수치는 자체 신고가 아니라 다운스트림 서버를 매번 직접 호출해 독립적으로 실측한 값입니다.
+
+| 시나리오 | 호출 수 | 히트율 | 절감률 |
+|---|---|---|---|
+| 동일 질의 반복 | 10 | 90.0% | 90.0% |
+| 유사 질의 변형 | 10 | 80.0% | 80.0% |
+| 다국어 질의 | 10 | 50.0% | 50.0% |
+| 혼합 워크로드 | 16 | 50.0% | 50.0% |
+| **전체** | **46** | **65.2%** | **64.9%** |
+
+전체 히트율 **65.2%**, 토큰 절감률 **64.9%**를 실측으로 확인했습니다. 지연시간에 대해서는 벤치마크 리포트에 솔직한 한계도 함께 적어뒀습니다 — 이번 벤치마크의 다운스트림 목업이 지나치게 가벼워서 캐시 히트(임베딩+벡터검색 필요)가 오히려 원본 호출보다 느리게 측정됐고, 이는 원본 MCP가 실제로 무거운 작업(검색 API, LLM 호출 등)을 할 때만 지연시간 이득도 함께 얻을 수 있음을 뜻합니다. 전체 방법론과 원자료는 [`benchmark/REPORT.md`](benchmark/REPORT.md)에 있습니다.
+
+## 프로젝트 구조
+
+```
+smart-cache-mcp/
+├── mcp-server/          # MCP 프록시 서버 (TypeScript)
+│   ├── src/
+│   │   ├── tools/            # 5개 MCP 도구
+│   │   ├── proxy/            # 하위 MCP 서버 연결
+│   │   ├── cache/             # 캐시 조회/저장/TTL/교체 정책
+│   │   ├── embedding/         # 임베딩 서비스 클라이언트
+│   │   └── db/                # PostgreSQL + pgvector 쿼리
+│   └── test/                 # vitest (unit + integration)
+├── embedding-service/    # 임베딩 서버 (Python + FastAPI)
+├── db/init.sql           # PostgreSQL 스키마
+├── benchmark/             # 토큰 절감 벤치마크
+└── docker-compose.yml
+```
+
+## 더 자세한 내용
+
+개발 컨벤션, 핵심 설정값(유사도 임계값, TTL 매핑, 교체 공식), 개발 중 발견한 이슈와 해결 과정(Windows 포트 충돌, MCP SDK DNS 리바인딩 보호, `@airmcp-dev/core` 세션 제한 등)은 [`CLAUDE.md`](CLAUDE.md)에 상세히 기록되어 있습니다.
