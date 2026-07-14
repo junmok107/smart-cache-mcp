@@ -36,6 +36,18 @@ flowchart LR
 
 3개 컨테이너가 Docker Compose로 함께 뜹니다: `mcp-server`(프록시 겸 MCP 서버), `embedding-service`(임베딩 전용), `postgres`(pgvector 확장, 벡터+메타데이터 저장).
 
+`cached_call` 내부에서는 히트/미스가 다음과 같이 갈립니다:
+
+```mermaid
+flowchart TD
+    A["cached_call 호출"] --> B{"캐시 조회\n코사인 유사도 ≥ 0.90?"}
+    B -- "히트" --> C["저장된 결과 즉시 반환"]
+    B -- "미스" --> D["하위 MCP 서버 호출"]
+    D --> E["결과 캐싱 후 반환"]
+```
+
+다이어그램에는 없지만 실제로 함께 동작하는 예외 처리: 캐시 미스가 동시에 몰릴 때 PostgreSQL Advisory Lock으로 중복 원본 호출을 막고(스탬피드 방지), 임베딩 서비스가 죽으면 SHA-256 해시 정확 매칭으로 폴백하며, 원본 MCP가 죽으면 만료된 캐시라도 `stale: true`로 반환합니다 (stale-while-revalidate).
+
 ## 5개 MCP 도구
 
 | 도구 | 설명 |
